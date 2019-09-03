@@ -30,10 +30,16 @@ the .mxs file with certain parameters.
 
 ## How to use them
 
+### To run
+
 - Modify the .mxs file to add code to render with the renderer you want to test
 - Copy one of the .ms files and rename for Your renderer
 - Modify the **renderedImageFolder** variable to point to a valid location. The 
   internal tests point this to a subfolder of the max installation, which is not
   a writable location on an end user machine, so it needs to be modified.
 
-  
+### The result
+
+The result is a Report.html file that will look something like the example 
+[Rendering_OSL_all_scenes.pdf](Rendering_OSL_all_scenes.pdf) in this repository.
+

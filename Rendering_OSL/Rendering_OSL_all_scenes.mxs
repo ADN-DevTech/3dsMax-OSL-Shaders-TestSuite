@@ -1,0 +1,294 @@
+/*
+    @param TestName:    Rendering_OSL_all_scenes.ms
+    @param Author:      Daniele Pollutro, from Zap Andersson's original work
+    @param Created:     01/26/2018
+    @param LastMod:     03/25/2019
+    @param ModBy:       Zap Andersson
+    @param Description: The purpose of this script is to validate OSL rendering using Scanline, QuickSilver and Arnold (if available).
+    @param Status:      Online
+*/
+fileIn "utils.mxs"
+
+-- Defaults ... overriden by the individual test files, but allows running THIS file as an overall test of everything
+doScanline = true
+doQuicksilver = true
+doArnold = true
+reportName = "Report.html"
+renderedImageFolder = undefined
+
+struct Rendering_OSL_All_Scenes
+(
+
+    private
+    testDataDir, testName, htmlReport, startTime,
+
+    public
+    function setup =
+    (
+        format "Setup...\n"
+        resetMaxFile #noPrompt
+
+        local thisFile = getSourceFileName()
+        local l_thisDir = pathConfig.removePathLeaf thisFile
+        testDataDir = pathconfig.appendpath l_thisDir "TestData"
+
+        -- if we're running THIS file as an all-in-one, define the renderedImageFolder here
+        -- otherwise, it was already defined by the calling script
+        if (renderedImageFolder == undefined) do (
+            local l_suiteName = fileNameFromPath l_thisDir
+            local l_testName = substituteString (fileNameFromPath thisFile) ".mxs" ""
+            local common_dest = pathconfig.appendpath (getDir #scripts) "rendered_images"
+            local suite_dest = pathconfig.appendpath common_dest l_suiteName
+            renderedImageFolder = pathconfig.appendpath suite_dest l_testName  -- all rendered test images go here
+            if not (doesfileexist renderedImageFolder) then ( -- if the folder doesn't already exist, make it
+                makeDir renderedImageFolder all:true
+            )
+            else ( -- if the folder does already exist, clean up files from previous run
+                local files = getFiles (pathconfig.appendpath renderedImageFolder "*.*")
+                for f in files do (
+                    deleteFile f
+                )
+            )
+        )
+
+        htmlReport = OpenFile (renderedImageFolder + "//" + reportName) mode:"wt"
+
+        header = "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">
+            <html xmlns=\"http://www.w3.org/1999/xhtml\" lang=\"en\" xml:lang=\"en\">
+            <head>
+            <title>
+            Rendering_OSL_all_scenes
+            </title>
+            </head>
+            <body>
+
+            <font face=\"Arial\"><center><h1>Rendering_OSL_all_scenes</h1></center>
+            <center>Started at %</center>
+            <p>
+            <center>
+            <table border=\"0\" cellpadding=\"2\">
+            "
+
+        format header localTime to:htmlReport
+
+        startTime = timestamp()
+
+    ),
+
+    function RenderScene rendererName =
+    (
+        forcecompleteredraw()
+
+        -- We save PNG with alpha OFF (which is not the default!)
+        local defaultAlpha = pngio.getAlpha()
+        pngio.setAlpha false
+
+        -- Do the rendering
+        local before = timestamp()
+        render_result = render outputwidth:320 outputheight:240
+        -- Compute the render time (as a string)
+        local renderTime = (((timestamp() - before) / 1000.0) as string + " sec")
+
+        -- Save the rendered image
+        current_image_path = pathConfig.appendPath renderedImageFolder  (testName+"." + rendererName + ".current.png")
+        render_result.filename = current_image_path
+
+        save render_result gamma:#auto
+        -- ...so we better set it back after, or we may break things (this gets saved in an .ini file!!)
+        pngio.setAlpha defaultAlpha
+
+        -- Compare images
+        baseline_image_path  = pathconfig.appendpath (pathconfig.appendpath testDataDir "Baselines") (testName + "."+ rendererName + ".baseline.png")
+        diff_image_path  = pathconfig.appendpath renderedImageFolder (testName + "." + rendererName + ".diff.bmp")
+        result_path  = pathconfig.appendpath renderedImageFolder (testName + "." + rendererName + ".diff.txt")
+        local result = imageCompare baseline_image_path current_image_path diff_image_path result_path
+
+        -- Start assuming all is well...
+        local bgcolor = "#20c020"
+        local message = "<h3>OK!</h3>"
+
+        -- result is an empty string when all is well, if not, it is the error message
+        if result != "" do (
+            bgcolor = "#ff0000" -- RED for DANGER
+            message = result
+        )
+
+        format "<tr><td align=\"right\"><b>%</b><br><font size=-1>%</font></td><td bgcolor=\"%\" align=\"center\" width=\"100\"><a href=\"%\">%</a></td><td><img src=\"%\" width=\"250\"></d><td><img src=\"%\" width=\"250\"></d><td><img src=\"%\" width=\"250\"></d></tr>" rendererName renderTime bgcolor result_path message current_image_path baseline_image_path diff_image_path to:htmlReport
+
+        -- purging bitmap data
+        freescenebitmaps()
+        gc()
+    ),
+
+    function RenderWithQuicksilver =
+    (
+        format "Rendering with Quicksilver:\t"
+        -- Quicksilver render settings
+        renderers.current = Quicksilver_Hardware_Renderer()
+        r = renderers.current
+		r.renderingIterations = 32
+		rendForce2Side=true
+        RenderScene("Quicksilver")
+    ),
+
+
+    function RenderWithScanline =
+    (
+        format "Rendering with Scanline:\t"
+        -- Scanline  render settings
+        renderers.current = Default_Scanline_Renderer()
+        renderers.current.globalSamplerEnabled = true
+        r = renderers.current
+
+        RenderScene("Scanline")
+    ),
+
+    function RenderWithArnold scenes_dir =
+    (
+        format "Rendering with Arnold:  \t"
+
+        -- Arnold render settings
+        renderers.current = Arnold()
+        r = renderers.current
+        r.legacy_3ds_max_map_support = true
+        r.prepass_enabled = false
+        r.verbosity_level = 4
+        procedural_search_path = pathconfig.appendpath  scenes_dir "Procedurals"
+        r.procedural_searchpath = procedural_search_path
+
+        RenderScene("Arnold")
+    ),
+
+    function LoadAndRender max_scene =
+    (
+        local scene_path = getFilenamePath max_scene
+        local test_dir = pathConfig.removePathLeaf scene_path
+        testName = getFilenameFile max_scene
+
+
+        local info = "Unknown (README missing)"
+
+        try
+        (
+            -- Extract just XXX from test_XXXX.max
+            local lastDigits = substring testName 6 4
+            local readme   = scene_path + "\\README_" + lastDigits
+            local f = OpenFile readme
+            if (f != undefined) do
+            (
+                info = readLine f
+                close f
+            )
+        )
+        catch
+        (
+            format "ERROR: Test name format is incorrect - could not extract README name"
+        )
+
+        local scenes_dir = pathConfig.removePathLeaf test_dir
+
+        texture_search_path = pathconfig.appendpath  test_dir "Textures"
+        mapPaths.add texture_search_path
+
+        -- Modify these lines to run a single test, in this case we skip a couple of flakey tests
+		--if (testName == "test_0012") do
+        if (testName != "test_0065" and testName != "test_0072") do
+        (
+            scene_loaded = loadMaxFile max_scene useFileUnits:true quiet:true
+
+            if scene_loaded then
+            (
+                format "Testing scene \"%\" - %\n" testName info
+
+                format "<tr><td colspan=1></td><td colspan=4 bgcolor=\"#c0c0ff\"><b>Test: \"%\" - %</b></td></tr>" testName info to:htmlReport
+                format "<tr><td colspan=1></td><td align=\"center\" bgcolor=\"#e0e0ff\"><small>Status</small></td><td bgcolor=\"#e0e0ff\"><small>Rendering</small></td><td bgcolor=\"#e0e0ff\"><small>Baseline</small></td><td bgcolor=\"#e0e0ff\"><small>Difference</small></td></tr>" testName info to:htmlReport
+
+                -- Render with Scanline
+                if doScanline do RenderWithScanline()
+                -- Render with Arnold, if present
+                if doArnold and Arnold != undefined do
+                    RenderWithArnold scenes_dir
+                -- Render with Quicksilver (if we have a GPU, that is)
+                if (doQuicksilver and SystemTools.IsGpuPresent()) then
+                    RenderWithQuicksilver()
+            )
+            else
+                format "ERROR: Load max scene file \"%\" failed\n" testName
+
+            format "===========================\n"
+        )
+    ),
+
+    function TestAllScenes =
+    (
+        local scene_dir = pathconfig.appendpath testDataDir "Scenes"
+
+        function GetMaxScenes base_dir =
+        (
+            result_file_list = #()
+            pattern = "test*.max"
+            dir_array = GetDirectories (base_dir + "/*")
+
+            for dir in dir_array do
+                join dir_array (GetDirectories (dir+"/*"))
+
+            join dir_array (GetDirectories(base_dir))
+
+            for file in dir_array do
+                join result_file_list (getFiles (file + pattern))
+
+            result_file_list -- return value
+        )
+
+        --search for max files each max files in each subfolders
+        local max_scenes = #()
+        max_scenes = GetMaxScenes(scene_dir)
+
+      --loop through max files and run a test with them
+        local max_scene = ""
+        for max_scene in max_scenes do
+        (
+            LoadAndRender max_scene
+        )
+    ),
+
+    function teardown =
+    (
+        format "Teardown...\n"
+
+        local elapsed = (timestamp() - startTime) / 1000.0
+        local elapsedTime = ((int (elapsed / 60)) as string) + " minutes " + ((mod elapsed 60.0) as string) + " seconds"
+
+        format "</table>
+            </center>
+            <p>
+            <center>Elapsed time %</center>
+           <p>
+            <font face=\"Arial\">
+            <center><a href=\".\">link to files</a></center>
+            </font>
+            </body>
+            </html>" elapsedTime to:htmlReport
+
+        close htmlReport
+    ),
+
+    Tests = #(TestAllScenes)
+)
+
+if (do_not_run_the_fixture_stuff == undefined) do
+(
+    if undefined == run_test_fixture then
+    (
+        format "-- No fixture!\n"
+        foo = Rendering_OSL_All_Scenes()
+        foo.setup()
+        foo.TestAllScenes()
+        foo.teardown()
+    )
+    else
+    (
+        format "-- Fixture found!\n"
+        run_test_fixture Rendering_OSL_All_Scenes script:(getThisScriptFilename())
+    )
+)

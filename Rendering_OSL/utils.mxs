@@ -1,0 +1,62 @@
+/*
+    @param Author: Daniele Pollutro
+    @param Created: 02/05/2018
+    @param LastMod: 11/29/2018
+    @param ModBy: Zap Andersson
+    @param Description: The purpose of this script is to provide utility methods for Rendering_OSL tests
+*/
+
+function imageCompare img1 img2 outputimg resultFile= (
+    local oiiotool_exe = pathConfig.appendPath (pathConfig.appendPath (pathConfig.appendPath (pathConfig.appendPath (pathConfig.appendPath (pathConfig.appendPath (getDir #scripts) "autoMXS") "TestSuites") "TestUtils") "OiioTool") "bin") "oiiotool.exe"
+	
+	local res = "" -- On success, return the empty string, if not, return is the error message
+	
+    if doesFileExist(oiiotool_exe) then
+    (
+        if doesFileExist(img1) and doesFileExist(img2) then
+        (
+            local cmd =  "oiiotool.exe --pdiff --failpercent 1 --fail 0.04 \"" + img1 + "\" \"" + img2 + "\" --sub --abs -o \"" + outputimg + "\" > "+ "\"" + resultFile + "\""
+            Hiddendoscommand cmd startpath:(pathConfig.removePathLeaf oiiotool_exe) donotwait:false
+            fin = openfile resultFile mode:"r"
+            seek fin #eof
+            maxlen=filepos fin
+            seek fin 0
+            res = readChars fin maxlen errorAtEOF:false
+            if (findString (toLower res) "failure") != undefined then
+            (
+                format "IMAGE COMPARISON FAILURE\n"
+                format "%" (substituteString res "error" "err")
+				res = "COMPARE FAIL!"
+            )
+            else
+			(
+                format "IMAGE COMPARISON PASSED\n"
+				res = "" -- Return empty string
+			)
+            close fin
+        )
+        else
+		(
+			-- If only rendering exists, but not baseline, it means we are making a baseline
+			-- Still spit out a message as an ERROR coz we don't want this to happen as a "real" run
+			if (doesFileExist(img2)) then
+			(
+				format "ERROR: baseline image(s) not found in \"%\" - GENERATING!\n" img1 
+				res = "Baseline MISSING!"
+				copyFile img2 img1
+			)
+			else
+			(
+				format "ERROR: image(s) not found in \"%\" or \"%\"\n" img1 img2
+				res = "Image(s) missing"
+			)
+		)
+    )
+    else
+	(
+        format "ERROR: oiiotool.exe not found in \"%\"\n"  oiiotool_exe
+		res = "OIIOTool.exe missing"
+	)
+
+	res
+)
